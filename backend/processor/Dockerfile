@@ -34,6 +34,7 @@ COPY --from=builder /app/processor/processor .
 
 # Define variável de ambiente (exemplo, ajuste conforme necessidade)
 ENV KAFKA_BROKER=kafka:9092
+ENV MONGO_URI=mongodb://mongo:27017
 
 # Comando para iniciar o app diretamente
 CMD ["./processor"]
