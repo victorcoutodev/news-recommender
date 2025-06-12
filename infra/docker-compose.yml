@@ -1,28 +1,51 @@
 version: "3.8"
 
 services:
-  kafka:
-    image: bitnami/kafka:latest
-    container_name: kafka
+  zookeeper:
+    image: bitnami/zookeeper:3.8
+    container_name: zookeeper
     ports:
-      - "9092:9092"
+      - "2181:2181"
     environment:
-      - KAFKA_ENABLE_KRAFT=yes
-      - KAFKA_CFG_NODE_ID=1
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
-      - ALLOW_PLAINTEXT_LISTENER=yes
-    volumes:
-      - kafka_data:/bitnami/kafka
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      - ZOO_ENABLE_ADMIN_SERVER=yes
+      - ZOO_4LW_COMMANDS_WHITELIST=ruok,start,srvr,stat
+      - REDIS_ADDR=redis:6379
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      test: ["CMD-SHELL", "echo stat | nc localhost 2181 | grep Mode"]
       interval: 10s
       timeout: 5s
       retries: 5
+    volumes:
+      - zookeeper_data:/bitnami/zookeeper/data
+    networks:
+      - kafka_net  # ✅ adicionada a rede
+
+  kafka:
+    image: bitnami/kafka:3.5
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      - KAFKA_ENABLE_KRAFT=no
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,PLAINTEXT_HOST://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    volumes:
+      - kafka_data:/bitnami/kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --list --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 20s
+      retries: 5
+    networks:
+      - kafka_net  # ✅ adicionada a rede
 
   infra-collector:
     build:
@@ -33,6 +56,8 @@ services:
         condition: service_healthy
     environment:
       - KAFKA_BROKER=kafka:9092
+    networks:
+      - kafka_net
 
   infra-processor:
     build:
@@ -43,6 +68,31 @@ services:
         condition: service_healthy
     environment:
       - KAFKA_BROKER=kafka:9092
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - REDIS_ADDR=redis:6379
+      
+    ports:
+      - "8080:8080"
+    networks:
+      - kafka_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # ✅ necessário para que o container veja o Ollama local
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - kafka_net
 
 volumes:
+  zookeeper_data:
   kafka_data:
+  redis_data:
+
+networks:
+  kafka_net:
+    driver: bridge
